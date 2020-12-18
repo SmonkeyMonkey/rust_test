@@ -37,7 +37,6 @@ async fn upload_file(mut req: Request<Body>) -> Result<Response<Body>, hyper::Er
     match (req.method(), req.uri().path()) {
         (&Method::POST, "/base64") => {
             let body = to_bytes(req.body_mut()).await.unwrap();
-
             // Decode Request<Body> from bytes to custom struct HttpRequest for base64 image
             let i: HttpRequest = serde_json::from_slice(&body).unwrap();
             match base64::decode(i.image) {
@@ -45,7 +44,6 @@ async fn upload_file(mut req: Request<Body>) -> Result<Response<Body>, hyper::Er
                     Ok(v) => {
                         // Creating image with original size
                         v.save(format!("images/{}.png", timestamp)).unwrap();
-
                         // Creating image with 100x100px size
                         v.resize(100, 100, Nearest)
                             .save(format!("small_images/{}.png", timestamp))
@@ -55,8 +53,10 @@ async fn upload_file(mut req: Request<Body>) -> Result<Response<Body>, hyper::Er
                         panic!(e)
                     }
                 },
-                Err(e) => {
-                    panic!(e)
+                Err(_) => {
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
+                    *response.body_mut() = Body::from("error decode base64");
+                    return Ok(response)
                 }
             }
 
@@ -118,8 +118,10 @@ async fn upload_file(mut req: Request<Body>) -> Result<Response<Body>, hyper::Er
                         .save(format!("small_images/{}.png", timestamp))
                         .unwrap()
                 }
-                Err(e) => {
-                    panic!(e)
+                Err(_) => {
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
+                    *response.body_mut() = Body::from("err download file");
+                    return Ok(response)
                 }
             }
             *response.status_mut() = StatusCode::OK;
@@ -127,7 +129,8 @@ async fn upload_file(mut req: Request<Body>) -> Result<Response<Body>, hyper::Er
         }
         _ => {
             *response.status_mut() = StatusCode::BAD_REQUEST;
-            *response.body_mut() = Body::from("error")
+            *response.body_mut() = Body::from("error");
+            return Ok(response)
         }
     }
     Ok(response)
@@ -145,7 +148,7 @@ async fn graceful_shutdown() {
 mod test {
     use super::*;
     use tokio::runtime::Runtime;
-
+  
     async fn start_serve() {
         std::fs::create_dir_all("./images").unwrap();
         std::fs::create_dir_all("./small_images").unwrap();
@@ -155,8 +158,7 @@ mod test {
     }
 
     #[test]
-    fn test_base64() {
-        let timestamp = chrono::Utc::now().timestamp();
+    fn correct_base64() {
         let mut rt = Runtime::new().unwrap();
         let client = Client::new();
         rt.spawn(start_serve());
@@ -173,9 +175,44 @@ mod test {
         let resp = rt.block_on(req).unwrap();
         let body = rt.block_on(to_bytes(resp.into_body())).unwrap();
         let res = std::str::from_utf8(&body).unwrap();
-        println!("{}", res);
-        assert_eq!(std::str::from_utf8(&body).unwrap(), "Success");
-        std::fs::remove_file(format!("images/{}.png", timestamp)).unwrap();
-        std::fs::remove_file(format!("small_images/{}.png", timestamp)).unwrap();
+        assert_eq!(res, "Success");        
+    }
+
+    #[test]
+    fn incorect_base64() {
+        let mut rt = Runtime::new().unwrap();
+        let client = Client::new();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let req = client.request(
+            Request::builder()
+                .method("POST")
+                .uri("http://localhost:8080/base64")
+                .body(Body::from(r#" {
+                    "image": "world" } "#)).unwrap()
+        );
+        let resp = rt.block_on(req).unwrap();
+        let body = rt.block_on(to_bytes(resp.into_body())).unwrap();
+        let res = std::str::from_utf8(&body).unwrap();
+        assert_eq!(res, "error decode base64");        
+    }
+
+    #[test]
+    fn download_from_uri() {
+        let mut rt = Runtime::new().unwrap();
+        let client = Client::new();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let req = client.request(
+            Request::builder()
+                .method("POST")
+                .uri("http://localhost:8080/from_uri")
+                .body(Body::from(r#" {
+                    "url": "https://www.gettyimages.com/gi-resources/images/500px/983794168.jpg" } "#)).unwrap()
+        );
+        let resp = rt.block_on(req).unwrap();
+        let body = rt.block_on(to_bytes(resp.into_body())).unwrap();
+        let res = std::str::from_utf8(&body).unwrap();
+        assert_eq!(res, "file is downloaded");        
     }
 }

@@ -1,5 +1,4 @@
 FROM rust:1.48 as builder
-
 RUN USER=root cargo new --bin rust_test
 WORKDIR ./rust_test
 COPY ./Cargo.toml ./Cargo.toml
@@ -27,7 +26,6 @@ ENV TZ=Etc/UTC \
 RUN groupadd $APP_USER \
     && useradd -g $APP_USER $APP_USER \
     && mkdir -p ${APP}
-
 COPY --from=builder /rust_test/target/release/rust_test ${APP}/rust_test
 
 RUN chown -R $APP_USER:$APP_USER ${APP}
